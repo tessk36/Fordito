@@ -51,6 +51,7 @@ class LiveTranslateClient(
 
     /** A setup-üzenet mezőelrendezése (lásd [setupMessage]); a működőt megjegyezzük. */
     @Volatile private var layout = workingLayout
+    private val attempts = mutableListOf<String>()
 
     fun connect() {
         if (apiKey.isBlank()) { listener.onError("Hiányzó Gemini API-kulcs (Beállítások → Online)."); return }
@@ -74,6 +75,7 @@ class LiveTranslateClient(
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 webSocket.close(1000, null)
                 if (!current(webSocket)) return
+                if (!ready && !closedByUs) attempts += "setup$myLayout: " + shortReason(reason)
                 // a szerver nem ismerte a setup egy mezőjét → a következő elrendezéssel újrapróbáljuk
                 if (!ready && !closedByUs && code == 1007 && reason.contains("Unknown name") &&
                     myLayout + 1 < LAYOUT_COUNT) {
@@ -82,7 +84,8 @@ class LiveTranslateClient(
                     open()
                     return
                 }
-                if (!closedByUs && code != 1000) listener.onError(closeMessage(code, reason))
+                if (!closedByUs && code != 1000) listener.onError(
+                    closeMessage(code, reason) + if (attempts.size > 1) "\n(Próbák: ${attempts.joinToString("; ")})" else "")
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 if (!current(webSocket)) return
@@ -167,8 +170,8 @@ class LiveTranslateClient(
         private const val WS_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
-        /** Ahány elrendezést kipróbálunk. */
-        const val LAYOUT_COUNT = 3
+        /** Ahány elrendezést kipróbálunk (a leírás szerinti, hibás 2-est nem). */
+        const val LAYOUT_COUNT = 2
         /** Az utoljára elfogadott elrendezés (a következő indításnál ezzel kezd). */
         @Volatile var workingLayout = 0
 
@@ -177,7 +180,8 @@ class LiveTranslateClient(
          * (a szerver a generationConfig alatt nem ismerte az inputAudioTranscription-t), ezért:
          *  0: átiratok a setup alatt, translationConfig a generationConfig alatt;
          *  1: átiratok és translationConfig is a setup alatt;
-         *  2: minden a generationConfig alatt (a leírás szerinti).
+         *  2: minden a generationConfig alatt (a leírás szerinti; a szerver elutasítja, csak tesztben).
+         * A 0 működik (fejlesztői fórum + kkdai/gemini-live-translate-macos, 2026. 10.).
          */
         fun setupMessage(model: String, target: String, layout: Int = 0): JSONObject {
             val m = if (model.startsWith("models/")) model else "models/$model"
@@ -242,6 +246,11 @@ class LiveTranslateClient(
                 audio = audio, turnComplete = turn, goAway = o.has("goAway")
             )
         }
+
+        /** A rövidített (123 bájtos) close-okból a lényeg: melyik mező, hol. */
+        fun shortReason(reason: String): String =
+            Regex("Unknown name \"([^\"]+)\" at '([^']+)'").find(reason)
+                ?.let { "${it.groupValues[1]} @ ${it.groupValues[2]}" } ?: reason.take(60)
 
         fun closeMessage(code: Int, reason: String): String = when {
             reason.contains("API key", ignoreCase = true) -> "Érvénytelen Gemini API-kulcs ($code)."

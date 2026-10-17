@@ -283,6 +283,8 @@ fun LiveScreen(onBack: () -> Unit, onOpenTranslation: (Long) -> Unit) {
                 }
                 session.status?.let { Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary) }
                 session.error?.let { Text("❌ $it", fontSize = 13.sp, color = MaterialTheme.colorScheme.error) }
+                Text("Fordító ${hu.orajegyzet.BuildConfig.VERSION_NAME}", fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                 // feliratok
                 val listState = rememberLazyListState()

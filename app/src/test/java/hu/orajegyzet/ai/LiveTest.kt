@@ -93,4 +93,9 @@ class LiveTest {
         assertFalse(l2.has("inputAudioTranscription"))
         assertTrue(l2.getJSONObject("generationConfig").has("inputAudioTranscription"))
     }
+
+    @Test fun shortReasonExtractsFieldAndPath() {
+        val r = "Invalid JSON payload received. Unknown name \"inputAudioTranscription\" at 'setup.generation_config': Cannot find field. Inva"
+        assertEquals("inputAudioTranscription @ setup.generation_config", LiveTranslateClient.shortReason(r))
+    }
 }
