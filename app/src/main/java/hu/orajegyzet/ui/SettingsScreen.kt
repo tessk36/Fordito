@@ -8,8 +8,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,166 +17,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import hu.orajegyzet.ai.GeminiPipeline
-import hu.orajegyzet.bell.BellScheduler
 import hu.orajegyzet.data.*
-import hu.orajegyzet.work.DigestWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-
-private val DAYS = listOf("H", "K", "Sze", "Cs", "P", "Szo", "V")
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ScheduleScreen(onBack: () -> Unit) {
-    val ctx = LocalContext.current
-    val db = remember { Db.get(ctx) }
-    val scope = rememberCoroutineScope()
-    val lessons by db.lessonDao().all().collectAsState(initial = emptyList())
-
-    // --- Órarend befényképezése (Gemini képfelismerés) ---
-    var photoStatus by remember { mutableStateOf<String?>(null) }
-    val cameraUri = remember {
-        val dir = java.io.File(ctx.cacheDir, "images").apply { mkdirs() }
-        val f = java.io.File(dir, "schedule.jpg")
-        androidx.core.content.FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", f)
-    }
-
-    fun importFromImage(uri: android.net.Uri) {
-        photoStatus = "Órarend felismerése a képből…"
-        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                val s = Settings.get(ctx)
-                if (s.geminiApiKey.isBlank()) {
-                    photoStatus = "Ehhez Gemini API-kulcs kell (Beállítások)."
-                    return@launch
-                }
-                val parsed = hu.orajegyzet.ai.ScheduleParser.parse(ctx, uri, s.geminiApiKey, s.geminiModel)
-                if (parsed.isEmpty()) {
-                    photoStatus = "Nem sikerült órát kiolvasni a képből."
-                } else {
-                    parsed.forEach { db.lessonDao().insert(it) }
-                    BellScheduler.rescheduleAll(ctx, db.lessonDao())
-                    photoStatus = "${parsed.size} óra hozzáadva a képből."
-                }
-            } catch (e: Exception) {
-                photoStatus = "Hiba: ${e.message}"
-            }
-        }
-    }
-
-    val galleryPicker = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.GetContent()
-    ) { uri -> uri?.let { importFromImage(it) } }
-
-    val cameraLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.TakePicture()
-    ) { success -> if (success) importFromImage(cameraUri) }
-
-    var subject by remember { mutableStateOf("") }
-    var teacher by remember { mutableStateOf("") }
-    var room by remember { mutableStateOf("") }
-    var day by remember { mutableIntStateOf(1) }
-    var start by remember { mutableStateOf("8:00") }
-    var end by remember { mutableStateOf("8:45") }
-
-    fun parseMin(t: String): Int? {
-        val p = t.split(":"); if (p.size != 2) return null
-        val h = p[0].trim().toIntOrNull() ?: return null
-        val m = p[1].trim().toIntOrNull() ?: return null
-        return if (h in 0..23 && m in 0..59) h * 60 + m else null
-    }
-
-    Scaffold(topBar = {
-        TopAppBar(title = { Text("Órarend") },
-            navigationIcon = { BackButton(onBack) })
-    }) { pad ->
-        Box(Modifier.padding(pad).fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        LazyColumn(Modifier.widthIn(max = 640.dp).fillMaxWidth().imePadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item {
-                Card(colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        Text("Órarend befényképezése", fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        Text("Fotózd le a papír/digitális órarended, és az app kitölti.",
-                            fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { cameraLauncher.launch(cameraUri) },
-                                modifier = Modifier.weight(1f)) { Text("Fényképezés") }
-                            OutlinedButton(onClick = { galleryPicker.launch("image/*") },
-                                modifier = Modifier.weight(1f)) { Text("Galériából") }
-                        }
-                        photoStatus?.let {
-                            Spacer(Modifier.height(6.dp))
-                            Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Text("Új óra", fontWeight = FontWeight.Medium)
-                OutlinedTextField(subject, { subject = it }, label = { Text("Tantárgy") },
-                    modifier = Modifier.fillMaxWidth())
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(teacher, { teacher = it }, label = { Text("Tanár") },
-                        modifier = Modifier.weight(1f))
-                    OutlinedTextField(room, { room = it }, label = { Text("Terem") },
-                        modifier = Modifier.weight(1f))
-                }
-                Row(verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DAYS.forEachIndexed { i, d ->
-                        FilterChip(selected = day == i + 1, onClick = { day = i + 1 },
-                            label = { Text(d) })
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(start, { start = it }, label = { Text("Kezdés (Ó:PP)") },
-                        modifier = Modifier.weight(1f))
-                    OutlinedTextField(end, { end = it }, label = { Text("Vége (Ó:PP)") },
-                        modifier = Modifier.weight(1f))
-                }
-                Button(
-                    onClick = {
-                        val s = parseMin(start); val e = parseMin(end)
-                        if (subject.isNotBlank() && s != null && e != null && e > s) {
-                            scope.launch {
-                                db.lessonDao().insert(Lesson(
-                                    subject = subject.trim(), teacher = teacher.trim(),
-                                    room = room.trim(), dayOfWeek = day, startMin = s, endMin = e))
-                                BellScheduler.rescheduleAll(ctx, db.lessonDao())
-                                subject = ""; teacher = ""; room = ""
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Hozzáadás") }
-                Spacer(Modifier.height(8.dp))
-                Text("Felvitt órák", fontWeight = FontWeight.Medium)
-            }
-            items(lessons) { l ->
-                Card {
-                    Row(Modifier.fillMaxWidth().padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("${DAYS[l.dayOfWeek - 1]} · ${l.subject}",
-                                fontWeight = FontWeight.Medium)
-                            Text("${fmt(l.startMin)}–${fmt(l.endMin)}" +
-                                (if (l.room.isNotBlank()) " · ${l.room}" else ""))
-                        }
-                        TextButton(onClick = {
-                            scope.launch {
-                                db.lessonDao().delete(l)
-                                BellScheduler.rescheduleAll(ctx, db.lessonDao())
-                            }
-                        }) { Text("Törlés") }
-                    }
-                }
-            }
-        }
-        }
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -190,11 +31,9 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     var expProc by remember { mutableStateOf(true) }
     var expPerf by remember { mutableStateOf(false) }
-    var expSchool by remember { mutableStateOf(false) }
     var expOnline by remember { mutableStateOf(false) }
     var geminiListBusy by remember { mutableStateOf(false) }
     var geminiListMsg by remember { mutableStateOf<String?>(null) }
-    var expEmail by remember { mutableStateOf(false) }
     var expModels by remember { mutableStateOf(false) }
 
     // --- Offline modellek importálása fájlválasztóval (adb nem szükséges) ---
@@ -245,18 +84,20 @@ fun SettingsScreen(onBack: () -> Unit) {
     if (confirmResetAll) {
         AlertDialog(
             onDismissRequest = { confirmResetAll = false },
-            title = { Text("Adatbázis Törlés & Gyári Reset") },
-            text = { Text("Biztosan törölni szeretnéd az ÖSSZES eddigi jegyzetet, döntést és feladatot? A sorszámozás újra a 001-ről fog indulni.") },
+            title = { Text("Előzmények törlése") },
+            text = { Text("Biztosan törölni szeretnéd az összes eddigi fordítást és a hozzájuk tartozó hangfelvételeket?") },
             confirmButton = {
                 Button(
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     onClick = {
                         scope.launch(Dispatchers.IO) {
-                            Db.resetAllData(ctx)
+                            TrDb.get(ctx).dao().deleteAll()
+                            ctx.filesDir.listFiles()?.filter { it.name.startsWith("rec_") || it.name.startsWith("imp_") }
+                                ?.forEach { it.delete() }
                         }
                         confirmResetAll = false
                     }
-                ) { Text("Igen, Törlés & Reset") }
+                ) { Text("Igen, törlés") }
             },
             dismissButton = {
                 TextButton(onClick = { confirmResetAll = false }) { Text("Mégse") }
@@ -294,10 +135,10 @@ fun SettingsScreen(onBack: () -> Unit) {
                             label = { Text("Gemini (felhő)") })
                     }
                     Text(
-                        if (s.preferGemini) "A hangot a Gemini írja át és elemzi. Hálózat nélkül automatikusan " +
-                            "helyben készül (Whisper + Gemma 4)."
-                        else "Minden a telefonon készül (Whisper + Gemma 4). A Gemini csak kérésre fut, " +
-                            "pl. „Újrafogalmazás Geminivel”.",
+                        if (s.preferGemini) "A fordítást a Gemini készíti (hangnál az átiratot is). Hálózat nélkül " +
+                            "automatikusan helyben készül (Whisper + Gemma 4)."
+                        else "Minden a telefonon készül (Whisper + Gemma 4). Ritkább nyelveknél a Gemini " +
+                            "pontosabb lehet.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp
                     )
                     if (s.preferGemini) {
@@ -327,8 +168,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2
                     )
-                    Text("A felvétel témája automatikusan hozzáadódik. A Whisper ezeknek a szavaknak az írásmódját " +
-                        "követi; a túl hosszú lista (${hu.orajegyzet.ai.WhisperPrompt.MAX_CHARS} karakter fölött) levágódik.",
+                    Text("A Whisper ezeknek a szavaknak az írásmódját követi; a nyelvet automatikusan felismeri. " +
+                        "A túl hosszú lista (${hu.orajegyzet.ai.WhisperPrompt.MAX_CHARS} karakter fölött) levágódik.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                     // 1.1.3: egyértelmű kijelzés, mi fog ténylegesen futni a mostani beállításokkal
                     val effective = hu.orajegyzet.ai.EngineRouting.describe(
@@ -336,22 +177,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                         privacyLock = s.privacyLock,
                         hasApiKey = s.geminiApiKey.isNotBlank(),
                         gemmaInstalled = modelStatus.gemmaInstalled
-                    )
+                    ).replace("Leirat és elemzés", "Átirat és fordítás").replace("kivonat", "nincs fordítómotor")
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
                         Text("Jelenleg: $effective", modifier = Modifier.padding(10.dp), fontSize = 13.sp,
                             fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSecondaryContainer)
                     }
-                }
-            }
-            item {
-                // 1.1.7: a többi szakaszhoz hasonlóan összecsukható; a fejléc mutatja az állapotot
-                SettingSection("Iskolai mód: " + if (s.schoolMode) "be" else "ki", expSchool, { expSchool = !expSchool }) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Iskolai mód (órarend, csengetés, widget)", modifier = Modifier.weight(1f))
-                        Switch(checked = s.schoolMode, onCheckedChange = { s = s.copy(schoolMode = it) })
-                    }
-                    Text("Kikapcsolva az órarend és a csengetés rejtve van, az adatok megmaradnak.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
             }
             item {
@@ -363,15 +193,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                         Text("Modell melegen tartása (ne töltse újra minden felvételnél)")
                     }
                     IntFieldRow("Melegen tartás (perc)", s.warmMinutes, 1..60) { s = s.copy(warmMinutes = it) }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(checked = s.stagedDisplay, onCheckedChange = { s = s.copy(stagedDisplay = it) })
-                        Spacer(Modifier.width(8.dp))
-                        Text("Szakaszos megjelenítés (előbb a leirat, utána az összefoglaló)")
-                    }
                     IntFieldRow("Felvétel-darab (mp)", s.whisperChunkSec, 10..120) { s = s.copy(whisperChunkSec = it) }
                     IntFieldRow("Darab-átfedés (mp)", s.whisperOverlapSec, 0..10) { s = s.copy(whisperOverlapSec = it) }
-                    IntFieldRow("Összefoglaló-blokk (karakter)", s.summaryBlockChars, 1500..6000) { s = s.copy(summaryBlockChars = it) }
-                    IntFieldRow("Hang megtartása (perc)", s.audioRetentionMin, 1..1440) { s = s.copy(audioRetentionMin = it) }
                     Text("A darabolás a hosszú felvételeknél számít; a default a mostani működés. " +
                         "Több szál gyorsabb lehet, de melegedésnél kevesebb (4–5) stabilabb.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
@@ -382,7 +205,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     if (s.privacyLock || !s.preferGemini) {
                         Text(
                             if (s.privacyLock) "⚠️ Az adatvédelmi zár be van kapcsolva, ezért a Gemini nem fut (minden helyben készül). A Gemini használatához kapcsold ki a zárat a Feldolgozás kártyán."
-                            else "ℹ️ Az alap elemző a Gemma 4, ezért a Gemini csak kérésre fut (pl. „Újrafogalmazás Geminivel”), vagy ha nincs telepített Gemma-modell. Átállítás: Feldolgozás → Alap elemző.",
+                            else "ℹ️ Az alap elemző a Gemma 4, ezért a Gemini csak akkor fut, ha nincs telepített Gemma-modell. Átállítás: Feldolgozás → Alap elemző.",
                             color = if (s.privacyLock) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 13.sp, fontWeight = FontWeight.Medium
                         )
@@ -463,7 +286,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                                     runCatching { GeminiPipeline(key).listModels() }
                                         .onSuccess { ids ->
                                             if (ids.isEmpty()) {
-                                                geminiListMsg = "❌ A kulccsal nem érhető el jegyzetkészítésre alkalmas modell."
+                                                geminiListMsg = "❌ A kulccsal nem érhető el fordításra alkalmas modell."
                                             } else {
                                                 val enc = hu.orajegyzet.ai.GeminiModels.encode(ids)
                                                 Settings.setGeminiModelsCache(ctx, enc)
@@ -499,27 +322,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
             item {
-                SettingSection("Napi e-mail kivonat", expEmail, { expEmail = !expEmail }) {
-                    OutlinedTextField(s.email, { s = s.copy(email = it) },
-                        label = { Text("Címzett email") }, modifier = Modifier.fillMaxWidth())
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(s.smtpHost, { s = s.copy(smtpHost = it) },
-                            label = { Text("SMTP host") }, modifier = Modifier.weight(2f))
-                        OutlinedTextField(s.smtpPort.toString(),
-                            { v -> v.toIntOrNull()?.let { s = s.copy(smtpPort = it) } },
-                            label = { Text("Port") }, modifier = Modifier.weight(1f))
-                    }
-                    OutlinedTextField(s.smtpUser, { s = s.copy(smtpUser = it) },
-                        label = { Text("SMTP felhasználó (email)") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(s.smtpPass, { s = s.copy(smtpPass = it) },
-                        label = { Text("SMTP jelszó (Gmail: alkalmazásjelszó)") },
-                        modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(s.digestHour.toString(),
-                        { v -> v.toIntOrNull()?.takeIf { it in 0..23 }?.let { s = s.copy(digestHour = it) } },
-                        label = { Text("Kivonat kiküldése (óra, 0–23)") }, modifier = Modifier.fillMaxWidth())
-                }
-            }
-            item {
                 SettingSection("Modellek", expModels, { expModels = !expModels }) {
                     // 1.1.4: a betöltött modellek pontos azonosítása
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
@@ -548,8 +350,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                         }
                     }
                     if (modelStatus.whisperInfo?.englishOnly == true) {
-                        Text("❌ A telepített Whisper csak angol nyelvű (.en) modell – magyarul nem működik. " +
-                            "Tölts le egy többnyelvűt (lent).", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                        Text("❌ A telepített Whisper csak angol nyelvű (.en) modell – a fordítóhoz többnyelvű kell " +
+                            "(automatikus nyelvfelismerés). Tölts le egy többnyelvűt (lent).", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
                     }
                     if (modelStatus.gemmaInvalidSizeBytes > 0) {
                         Text("❌ A telepített Gemma-fájl (%.0f MB) nem LiteRT-LM (.litertlm) modell – valószínűleg egy régi MediaPipe .task, vagy sérült/félbeszakadt letöltés. Töröld, és importáld a gemma-4-E2B-it.litertlm fájlt."
@@ -620,11 +422,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                     scope.launch {
                         try {
                             Settings.save(ctx, s)
-                            DigestWorker.schedule(ctx)
-                            // az App saját scope-jában, hogy a képernyő bezárása ne szakítsa meg
-                            (ctx.applicationContext as hu.orajegyzet.App).appScope.launch {
-                                runCatching { hu.orajegyzet.bell.SchoolMode.apply(ctx.applicationContext) }
-                            }
                             onBack()
                         } catch (e: SecretStorageException) {
                             snackbarHostState.showSnackbar("Az API-kulcsot nem sikerült biztonságosan elmenteni. Próbáld újra, vagy indítsd újra a telefont.")
@@ -638,7 +435,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("💣 Összes adat törlése / Reset (001-ről indul)")
+                    Text("🗑️ Összes fordítás törlése")
                 }
             }
         }

@@ -4,11 +4,8 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import hu.orajegyzet.data.AppSettings
-import hu.orajegyzet.data.GanttTaskEntity
 import hu.orajegyzet.data.Mode
-import hu.orajegyzet.data.ProjectEventEntity
 import org.json.JSONObject
-import java.time.LocalDate
 
 /** A feldolgozás kimenete. */
 data class NoteResult(
@@ -16,8 +13,6 @@ data class NoteResult(
     val summary: String,
     val structured: String,
     val keywords: List<String>,
-    val decisions: List<ProjectEventEntity> = emptyList(),
-    val tasks: List<GanttTaskEntity> = emptyList(),
     /** Mi készítette az összefoglalót: GEMMA | GEMINI | EXTRACTIVE | TEMPLATE (1.0.4). */
     val engine: String? = null,
     /** Felhasználónak szóló figyelmeztetés (pl. miért nem futott a Gemma). */
@@ -81,12 +76,9 @@ object ModeSelector {
 }
 
 /** Közös segéd: a modellek JSON-válaszának tűrőképes feldolgozása. */
-internal fun parseModelJson(raw: String, fallbackTranscript: String = "", projectId: String = "prj-01"): NoteResult {
+internal fun parseModelJson(raw: String, fallbackTranscript: String = ""): NoteResult {
     val cleaned = raw.trim()
         .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
-
-    val extractedDecisions = mutableListOf<ProjectEventEntity>()
-    val extractedTasks = mutableListOf<GanttTaskEntity>()
 
     // 1) Először a szabályos JSON (ha a modell tisztán adta)
     runCatching {
@@ -94,51 +86,13 @@ internal fun parseModelJson(raw: String, fallbackTranscript: String = "", projec
         val kw = mutableListOf<String>()
         o.optJSONArray("keywords")?.let { arr -> for (i in 0 until arr.length()) kw += arr.getString(i) }
 
-        // Döntések és események kinyerése
-        o.optJSONArray("decisions")?.let { arr ->
-            for (i in 0 until arr.length()) {
-                val item = arr.optJSONObject(i) ?: continue
-                extractedDecisions += ProjectEventEntity(
-                    projectId = projectId,
-                    date = LocalDate.now().toString(),
-                    type = item.optString("type", "decision"),
-                    title = item.optString("title", "Elfogadott döntés"),
-                    description = item.optString("description", ""),
-                    impact = item.optString("impact", "medium"),
-                    owner = item.optString("owner", "Projektvezető"),
-                    status = "open",
-                    decisionRationale = item.optString("rationale", "")
-                )
-            }
-        }
-
-        // Feladatok kinyerése
-        o.optJSONArray("tasks")?.let { arr ->
-            for (i in 0 until arr.length()) {
-                val item = arr.optJSONObject(i) ?: continue
-                val today = LocalDate.now()
-                extractedTasks += GanttTaskEntity(
-                    projectId = projectId,
-                    title = item.optString("title", "Új projektfeladat"),
-                    startDate = item.optString("startDate", today.toString()),
-                    dueDate = item.optString("dueDate", today.plusDays(14).toString()),
-                    progress = 0,
-                    assignee = item.optString("assignee", "Felelős"),
-                    status = "not_started",
-                    priority = item.optString("priority", "medium")
-                )
-            }
-        }
-
         val summary = o.optString("summary")
         if (summary.isNotBlank()) {
             return NoteResult(
                 transcript = o.optString("transcript", fallbackTranscript).ifBlank { fallbackTranscript },
                 summary = summary,
                 structured = o.optString("notes"),
-                keywords = kw,
-                decisions = extractedDecisions,
-                tasks = extractedTasks
+                keywords = kw
             )
         }
     }
@@ -161,9 +115,9 @@ internal fun parseModelJson(raw: String, fallbackTranscript: String = "", projec
         ?: emptyList()
 
     return if (summary.isBlank() && notes.isBlank()) {
-        NoteResult(fallbackTranscript.ifBlank { tr }, cleaned.take(2000), "", emptyList(), extractedDecisions, extractedTasks)
+        NoteResult(fallbackTranscript.ifBlank { tr }, cleaned.take(2000), "", emptyList())
     } else {
-        NoteResult(fallbackTranscript.ifBlank { tr }, summary, notes, kw, extractedDecisions, extractedTasks)
+        NoteResult(fallbackTranscript.ifBlank { tr }, summary, notes, kw)
     }
 }
 
@@ -178,9 +132,7 @@ Válaszolj KIZÁRÓLAG érvényes JSON-nal, markdown nélkül, pontosan ezekkel 
 {"transcript": "teljes leirat (ha hangot kaptál; leirat-bemenetnél hagyd üresen)",
  "summary": "8-12 mondatos, asszertív hivatali és hivatalos vezetői stílusban megírt tömör összefoglaló magyarul",
  "notes": "strukturált jegyzet markdown formátumban: ## Hivatalos Témakörök, **Hivatali Fogalmak**, határozott döntések és kötelezettségek",
- "keywords": ["5-10 kulcsfogalom"],
- "decisions": [{"title": "döntés címe", "description": "részletek", "type": "decision|risk|milestone", "impact": "high|medium|low", "owner": "felelős"}],
- "tasks": [{"title": "feladat címe", "assignee": "felelős neve", "priority": "high|medium|low"}]}
+ "keywords": ["5-10 kulcsfogalom"]}
 Ha a beszélőre hivatkozol, használd a(z) "$role" megfogalmazást.
 Csak az elhangzottakra támaszkodj, ne találj ki nem létező információt."""
 }

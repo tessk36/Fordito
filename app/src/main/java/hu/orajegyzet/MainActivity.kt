@@ -2,6 +2,8 @@ package hu.orajegyzet
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,83 +16,80 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import hu.orajegyzet.rec.RecordingService
-import hu.orajegyzet.ui.HistoryScreen
-import hu.orajegyzet.ui.NoteDetailScreen
-import hu.orajegyzet.ui.ProjectAssistantScreen
-import hu.orajegyzet.ui.ScheduleScreen
 import hu.orajegyzet.ui.SettingsScreen
-import hu.orajegyzet.ui.TodayScreen
-import hu.orajegyzet.ui.WelcomeScreen
+import hu.orajegyzet.ui.SharedInput
+import hu.orajegyzet.ui.TranslationDetailScreen
+import hu.orajegyzet.ui.TranslationHistoryScreen
+import hu.orajegyzet.ui.TranslatorScreen
 
 class MainActivity : ComponentActivity() {
 
-    private var pendingLessonId: Long? = null
-    private var pendingTitle: String? = null
+    /** Más appból megosztott szöveg / hangfájl, amíg a Fordító képernyő át nem veszi. */
+    private var shared by mutableStateOf<SharedInput?>(null)
+    /** Értesítésből megnyitandó fordítás. */
+    private var openId by mutableStateOf<Long?>(null)
+
+    private var pendingStyle: String? = null
 
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
         if (grants[Manifest.permission.RECORD_AUDIO] == true) {
-            pendingLessonId.let { RecordingService.start(this, it, pendingTitle); pendingLessonId = null; pendingTitle = null }
+            pendingStyle?.let { RecordingService.start(this, it) }
         }
+        pendingStyle = null
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        requestBasePermissions()
-        handleIntent(intent)
+        requestNotificationPermission()
+        if (savedInstanceState == null) handleIntent(intent)
 
         setContent {
             val settings by hu.orajegyzet.data.Settings.flow(this)
                 .collectAsState(initial = hu.orajegyzet.data.AppSettings())
-            // A téma az alap elemző szerint vált (1.1.3): Gemma 4 vagy adatvédelmi zár = meleg
-            // borostyán (helyben); Gemini = hűvös zöld (felhő).
+            // a téma a motor szerint: helyben = meleg borostyán, Gemini = hűvös zöld
             val online = settings.preferGemini && !settings.privacyLock
 
             hu.orajegyzet.ui.OraJegyzetTheme(online = online) {
                 Surface(color = MaterialTheme.colorScheme.background) {
                     val nav = rememberNavController()
-                    NavHost(navController = nav, startDestination = "welcome") {
-                        composable("welcome") {
-                            WelcomeScreen(
-                                onEnterApp = {
-                                    nav.navigate("today") {
-                                        popUpTo("welcome") { inclusive = true }
-                                    }
-                                },
-                                onExitApp = { finishAffinity() }
-                            )
-                        }
-                        composable("today") {
-                            TodayScreen(
-                                onOpenNote = { id -> nav.navigate("note/$id") },
-                                onOpenAssistant = { nav.navigate("assistant") },
-                                onOpenSchedule = { nav.navigate("schedule") },
-                                onOpenSettings = { nav.navigate("settings") },
+                    LaunchedEffect(openId) {
+                        openId?.let { nav.navigate("tr/$it"); openId = null }
+                    }
+                    NavHost(navController = nav, startDestination = "translator") {
+                        composable("translator") {
+                            TranslatorScreen(
+                                shared = shared,
+                                onSharedConsumed = { shared = null },
                                 onOpenHistory = { nav.navigate("history") },
-                                onStartRecording = { lessonId, title -> startRecordingChecked(lessonId, title) },
+                                onOpenSettings = { nav.navigate("settings") },
+                                onStartRecording = { style -> startRecordingChecked(style) },
                                 onStopRecording = { RecordingService.stop(this@MainActivity) }
                             )
                         }
-                        composable("assistant") {
-                            ProjectAssistantScreen(
-                                onBack = { nav.popBackStack() },
-                                onOpenNote = { id -> nav.navigate("note/$id") }
-                            )
-                        }
-                        composable("note/{id}") { back ->
-                            val id = back.arguments?.getString("id")?.toLongOrNull() ?: return@composable
-                            NoteDetailScreen(noteId = id, onBack = { nav.popBackStack() })
-                        }
-                        composable("schedule") { ScheduleScreen(onBack = { nav.popBackStack() }) }
-                        composable("settings") { SettingsScreen(onBack = { nav.popBackStack() }) }
                         composable("history") {
-                            HistoryScreen(
-                                onOpenNote = { id -> nav.navigate("note/$id") },
+                            TranslationHistoryScreen(
+                                onOpen = { id -> nav.navigate("tr/$id") },
                                 onBack = { nav.popBackStack() }
                             )
                         }
+                        composable("tr/{id}") { back ->
+                            val id = back.arguments?.getString("id")?.toLongOrNull() ?: return@composable
+                            TranslationDetailScreen(
+                                id = id,
+                                onBack = { nav.popBackStack() },
+                                onOpen = { newId ->
+                                    nav.navigate("tr/$newId") { popUpTo("tr/{id}") { inclusive = true } }
+                                },
+                                onEditOriginal = { text ->
+                                    shared = SharedInput(text = text)
+                                    nav.popBackStack("translator", inclusive = false)
+                                }
+                            )
+                        }
+                        composable("settings") { SettingsScreen(onBack = { nav.popBackStack() }) }
                     }
                 }
             }
@@ -102,38 +101,55 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
-    /** Becsengetési értesítésből / widgetből érkező indítás. */
+    /** Megosztás (szöveg / hangfájl) és értesítésből érkező megnyitás. */
     private fun handleIntent(intent: Intent?) {
-        if (intent?.action == ACTION_START_REC) {
-            val lessonId = intent.getLongExtra("lessonId", -1).takeIf { it >= 0 }
-            startRecordingChecked(lessonId)
+        intent ?: return
+        when (intent.action) {
+            Intent.ACTION_SEND -> {
+                val type = intent.type.orEmpty()
+                if (type.startsWith("text/")) {
+                    val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+                        ?: intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+                    if (!text.isNullOrBlank()) shared = SharedInput(text = text)
+                } else if (type.startsWith("audio/") || type.startsWith("video/")) {
+                    streamUri(intent)?.let { shared = SharedInput(audio = it) }
+                }
+            }
+            Intent.ACTION_PROCESS_TEXT -> {
+                intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
+                    ?.takeIf { it.isNotBlank() }?.let { shared = SharedInput(text = it) }
+            }
+            ACTION_OPEN_TRANSLATION -> {
+                intent.getLongExtra(EXTRA_ID, -1).takeIf { it >= 0 }?.let { openId = it }
+            }
         }
     }
 
-    private fun startRecordingChecked(lessonId: Long?, title: String? = null) {
+    @Suppress("DEPRECATION")
+    private fun streamUri(intent: Intent): Uri? =
+        if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        else intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+
+    private fun startRecordingChecked(style: String) {
         val hasMic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
         if (hasMic) {
-            RecordingService.start(this, lessonId, title)
+            RecordingService.start(this, style)
         } else {
-            pendingLessonId = lessonId
-            pendingTitle = title
+            pendingStyle = style
             permLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
         }
     }
 
-    private fun requestBasePermissions() {
-        val wanted = buildList {
-            add(Manifest.permission.RECORD_AUDIO)
-            if (android.os.Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        val missing = wanted.filter {
-            checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
-        }
-        if (missing.isNotEmpty()) permLauncher.launch(missing.toTypedArray())
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) permLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
     }
 
     companion object {
-        const val ACTION_START_REC = "hu.orajegyzet.START_REC"
+        const val ACTION_OPEN_TRANSLATION = "hu.assisten.fordito.OPEN_TRANSLATION"
+        const val EXTRA_ID = "trId"
     }
 }

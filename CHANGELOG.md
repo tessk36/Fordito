@@ -1,3 +1,20 @@
+# Fordító
+
+## 0.1.0 – 2026. 10. 17. (fork az AssiSten-s 1.1.8-ból)
+
+- Új app: **Fordító**, azonosító `hu.assisten.fordito` (az AssiSten-s mellé települ).
+- Fordítás bármilyen nyelvről magyarra, öt átírási móddal (hű, természetes, hivatalos, egyszerű, összefoglaló).
+- Bemenet: szöveg, élő felvétel, hangfájl, megosztás más appból, „Fordítás magyarra” a kijelölt szöveg menüjében.
+- Whisper: automatikus nyelvfelismerés (`params.language = "auto"`), a szótár nyelvi utalás nélkül.
+- Importált hangfájlok átmintavételezése 16 kHz mono-ra (Pcm16kConverter).
+- Gemini: hangból egy hívásban átirat + fordítás (JSON), tetszőleges hangformátummal.
+- Előzmények kereséssel, újrafordítás más módban, másolás, megosztás, felolvasás.
+- Kikerült: órarend, csengetés, iskolai mód, widget, projektasszisztens, jelentések, napi e-mail-kivonat.
+
+---
+
+# Előzmény: AssiSten-s
+
 # Változási Napló (Changelog) – AssiSten-s (korábban Fülelő Hangjegyzet)
 
 ## 1.1.8 (versionCode 15) – Összeomlás javítása döntés / feladat törlésekor

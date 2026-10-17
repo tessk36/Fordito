@@ -436,7 +436,9 @@ Java_com_redravencomputing_whispercore_WhisperJNIBridge_fullTranscribe(
     params.print_timestamps = true;
     params.print_special = false;
     params.translate = false;
-    params.language = "hu";
+    // AssiSten-s Fordító: automatikus nyelvfelismerés (bármilyen nyelv → átirat az eredeti nyelven)
+    params.language = "auto";
+    params.detect_language = false;
     params.n_threads = num_threads;
     params.offset_ms = 0;
     params.no_context = true;

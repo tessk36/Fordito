@@ -427,6 +427,12 @@ class OfflinePipeline(
         val codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
         codec.configure(format, null, null, 0)
         codec.start()
+        // Fordító 0.1: importált hangfájl (pl. 44,1 kHz sztereó) → 16 kHz mono a Whispernek
+        fun fmtInt(f: MediaFormat, key: String, def: Int) =
+            if (f.containsKey(key)) runCatching { f.getInteger(key) }.getOrDefault(def) else def
+        var resampler = Pcm16kConverter(
+            fmtInt(format, MediaFormat.KEY_SAMPLE_RATE, 16_000),
+            fmtInt(format, MediaFormat.KEY_CHANNEL_COUNT, 1))
         val info = MediaCodec.BufferInfo()
         var inputDone = false
         var outputDone = false
@@ -451,16 +457,24 @@ class OfflinePipeline(
                     }
                 }
                 when (val outIdx = codec.dequeueOutputBuffer(info, 10_000)) {
-                    MediaCodec.INFO_TRY_AGAIN_LATER, MediaCodec.INFO_OUTPUT_FORMAT_CHANGED,
-                    MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> { }
+                    MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        val of = codec.outputFormat
+                        resampler = Pcm16kConverter(
+                            fmtInt(of, MediaFormat.KEY_SAMPLE_RATE, resampler.srcRate),
+                            fmtInt(of, MediaFormat.KEY_CHANNEL_COUNT, resampler.channels))
+                    }
+                    MediaCodec.INFO_TRY_AGAIN_LATER, MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> { }
                     else -> if (outIdx >= 0) {
                         val out = codec.getOutputBuffer(outIdx)!!
                         if (info.size > 0) {
                             out.order(ByteOrder.LITTLE_ENDIAN)
-                            val bytes = ByteArray(info.size)
-                            out.get(bytes)
-                            produced += bytes.size
-                            onChunk(bytes, bytes.size)
+                            val raw = ByteArray(info.size)
+                            out.get(raw)
+                            val bytes = resampler.convert(raw, raw.size)
+                            if (bytes.isNotEmpty()) {
+                                produced += bytes.size
+                                onChunk(bytes, bytes.size)
+                            }
                         }
                         codec.releaseOutputBuffer(outIdx, false)
                         if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
@@ -660,4 +674,62 @@ class OfflinePipeline(
             return phrases.any { clean.contains(it) }
         }
     }
+}
+
+/**
+ * 16 bites PCM → 16 kHz mono átalakító (Fordító 0.1). Csatornákat átlagol, majd lineáris
+ * interpolációval mintavételez át; az állapot a darabok között megmarad. 16 kHz mono
+ * bemenetnél változatlanul adja vissza a bájtokat. Tiszta Kotlin (unit teszt).
+ */
+class Pcm16kConverter(srcRate: Int, channels: Int) {
+    val srcRate: Int = if (srcRate > 0) srcRate else 16_000
+    val channels: Int = channels.coerceAtLeast(1)
+    private val passthrough = this.srcRate == TARGET && this.channels == 1
+    private val step = this.srcRate.toDouble() / TARGET
+    /** A következő kimeneti minta helye a bemenetben (az előző darab utolsó mintájához képest). */
+    private var pos = 0.0
+    private var prev: Short = 0
+    private var hasPrev = false
+    private var leftover = ByteArray(0)
+
+    fun convert(bytes: ByteArray, len: Int): ByteArray {
+        if (passthrough) return if (len == bytes.size) bytes else bytes.copyOf(len)
+        val data = if (leftover.isEmpty()) bytes.copyOf(len) else leftover + bytes.copyOf(len)
+        val frameBytes = 2 * channels
+        val frames = data.size / frameBytes
+        leftover = data.copyOfRange(frames * frameBytes, data.size)
+        if (frames == 0) return ByteArray(0)
+
+        // 1) mono
+        val mono = ShortArray(frames)
+        for (f in 0 until frames) {
+            var sum = 0
+            for (c in 0 until channels) {
+                val i = f * frameBytes + c * 2
+                sum += ((data[i].toInt() and 0xff) or (data[i + 1].toInt() shl 8)).toShort().toInt()
+            }
+            mono[f] = (sum / channels).toShort()
+        }
+
+        // 2) átmintavételezés: a „virtuális” sor = [prev] + mono; a pos ehhez képest értendő
+        val out = java.io.ByteArrayOutputStream(((frames / step) + 2).toInt() * 2)
+        val offset = if (hasPrev) 1 else 0
+        fun sample(i: Int): Int = if (hasPrev && i == 0) prev.toInt() else mono[i - offset].toInt()
+        val last = frames - 1 + offset
+        while (pos <= last - 1) {
+            val i0 = Math.floor(pos).toInt()
+            val frac = pos - i0
+            val v = sample(i0) * (1 - frac) + sample(i0 + 1) * frac
+            val sv = v.toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            out.write(sv and 0xff); out.write((sv shr 8) and 0xff)
+            pos += step
+        }
+        // a pos átvitele a következő darabra: az új sor 0. eleme a mostani utolsó minta
+        pos -= last
+        prev = mono[frames - 1]
+        hasPrev = true
+        return out.toByteArray()
+    }
+
+    companion object { const val TARGET = 16_000 }
 }

@@ -15,31 +15,29 @@ import android.os.Looper
 import hu.orajegyzet.App
 import hu.orajegyzet.MainActivity
 import hu.orajegyzet.R
-import hu.orajegyzet.data.Db
-import hu.orajegyzet.data.Note
-import hu.orajegyzet.data.NoteCodeGenerator
-import hu.orajegyzet.data.NoteStatus
-import hu.orajegyzet.work.ProcessingWorker
+import hu.orajegyzet.data.TrDb
+import hu.orajegyzet.data.TrKind
+import hu.orajegyzet.data.TrStatus
+import hu.orajegyzet.data.Translation
+import hu.orajegyzet.work.TranslateWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.time.LocalDate
-import java.time.LocalTime
 
 /**
- * Mikrofonos előtér-szolgáltatás. 16 kHz mono AAC/M4A-t rögzít (~21 MB / 45 perc),
- * ami a Whisper-nek (16 kHz PCM-re dekódolva) és a Gemini-nek is ideális.
- * Indítás: csak felhasználói interakcióból (értesítés/widget/app). Leállás:
- * kicsengetési alarm, kézi stop, vagy biztonsági időkorlát.
+ * Mikrofonos előtér-szolgáltatás (Fordító 0.1). 16 kHz mono AAC/M4A-t rögzít; leállításkor
+ * a felvétel a fordítási sorba kerül (TranslateWorker). Biztonsági időkorlát: [MAX_MIN] perc.
  */
 class RecordingService : Service() {
 
     private var recorder: MediaRecorder? = null
-    private var noteId: Long = -1
+    private var trId: Long = -1
     private val handler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val safetyStop = Runnable { stopAndProcess() }
@@ -50,78 +48,31 @@ class RecordingService : Service() {
         when (intent?.action) {
             ACTION_STOP -> { stopAndProcess(); return START_NOT_STICKY }
             ACTION_START -> {
-                if (isStarting || isRecordingActive || recorder != null) {
-                    return START_NOT_STICKY
-                }
-                val lessonId = intent.getLongExtra("lessonId", -1).takeIf { it >= 0 }
-                val title = intent.getStringExtra("title")
-                val projectId = intent.getStringExtra("projectId")
-                val docType = intent.getStringExtra("docType") ?: "JEG"
-                val projectCode = intent.getStringExtra("projectCode")
-
-                // 1. Azonnali startForeground, hogy elkerüljük az ANR-t és a ForegroundServiceDidNotStartInTimeException-t
-                val initialNotif = buildNotification("Felvétel indítása…")
+                if (isStarting || recorder != null || _active.value != null) return START_NOT_STICKY
+                val style = intent.getStringExtra(EXTRA_STYLE) ?: "NATURAL"
+                val n = buildNotification("Felvétel indítása…")
                 if (Build.VERSION.SDK_INT >= 30) {
-                    startForeground(NOTIF_ID, initialNotif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-                } else {
-                    startForeground(NOTIF_ID, initialNotif)
-                }
-
-                startRecording(lessonId, title, projectId, docType, projectCode)
+                    startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                } else startForeground(NOTIF_ID, n)
+                startRecording(style)
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun startRecording(
-        lessonId: Long?,
-        title: String?,
-        projectId: String? = null,
-        docType: String = "JEG",
-        projectCode: String? = null
-    ) {
+    private fun startRecording(style: String) {
         isStarting = true
-        scope.launch(Dispatchers.IO) {
+        scope.launch {
+            var newId = -1L
             try {
-                val db = Db.get(this@RecordingService)
-                val now = LocalTime.now()
-                val nowMin = now.hour * 60 + now.minute
-                val todayStr = LocalDate.now().toString()
-
-                val l = lessonId?.let { db.lessonDao().byId(it) }
-                val subject = (title?.takeIf { it.isNotBlank() } ?: l?.subject ?: "Felvétel")
-                val endMin = l?.endMin ?: (nowMin + DEFAULT_MAX_MIN)
-
-                val existingToday = db.noteDao().allOnDate(todayStr)
-                val docCode = NoteCodeGenerator.generate(
-                    projectCode = projectCode ?: projectId,
-                    subject = subject,
-                    docType = docType,
-                    date = LocalDate.now(),
-                    sequence = existingToday.size + 1
-                )
-
                 val file = File(filesDir, "rec_${System.currentTimeMillis()}.m4a")
-
-                val newNoteId = db.noteDao().insert(
-                    Note(
-                        lessonId = lessonId,
-                        projectId = projectId,
-                        docCode = docCode,
-                        docType = docType,
-                        subject = subject,
-                        dateIso = todayStr,
-                        startMin = nowMin, endMin = endMin,
-                        status = NoteStatus.RECORDING, audioPath = file.absolutePath
-                    )
+                newId = TrDb.get(this@RecordingService).dao().insert(
+                    Translation(kind = TrKind.AUDIO, status = TrStatus.RECORDING, style = style,
+                        audioPath = file.absolutePath, audioMime = "audio/mp4")
                 )
-
                 withContext(Dispatchers.Main) {
-                    noteId = newNoteId
-                    isRecordingActive = true
-                    recordingStartMillis = System.currentTimeMillis()
-
-                    val mr = (if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this@RecordingService) else @Suppress("DEPRECATION") MediaRecorder()).apply {
+                    val mr = (if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this@RecordingService)
+                        else @Suppress("DEPRECATION") MediaRecorder()).apply {
                         setAudioSource(MediaRecorder.AudioSource.MIC)
                         setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                         setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
@@ -133,32 +84,32 @@ class RecordingService : Service() {
                         start()
                     }
                     recorder = mr
-
-                    val notif = buildNotification(subject)
-                    val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-                    nm.notify(NOTIF_ID, notif)
-
-                    val remainingMin = ((endMin - nowMin).coerceIn(1, 90)) + 2
-                    handler.postDelayed(safetyStop, remainingMin * 60_000L)
+                    trId = newId
+                    startedAt = System.currentTimeMillis()
+                    _active.value = newId
+                    getSystemService(NotificationManager::class.java)
+                        .notify(NOTIF_ID, buildNotification("Felvétel folyamatban – a leállítás után fordítok"))
+                    handler.postDelayed(safetyStop, MAX_MIN * 60_000L)
                 }
             } catch (e: Exception) {
-                isRecordingActive = false
-                val idToFail = noteId
-                if (idToFail >= 0) {
-                    (applicationContext as App).appScope.launch {
-                        val dao = Db.get(this@RecordingService).noteDao()
-                        dao.byId(idToFail)?.let { dao.update(it.copy(status = NoteStatus.ERROR, error = "Mikrofon indítási hiba: ${e.message}")) }
+                _active.value = null
+                if (newId >= 0) {
+                    val dao = TrDb.get(this@RecordingService).dao()
+                    dao.byId(newId)?.let {
+                        dao.update(it.copy(status = TrStatus.ERROR, error = "Mikrofon indítási hiba: ${e.message}"))
                     }
                 }
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                withContext(Dispatchers.Main) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             } finally {
                 isStarting = false
             }
         }
     }
 
-    private fun buildNotification(subject: String): Notification {
+    private fun buildNotification(text: String): Notification {
         val stopPi = PendingIntent.getService(
             this, 1, Intent(this, RecordingService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -169,28 +120,28 @@ class RecordingService : Service() {
         )
         return Notification.Builder(this, App.CH_REC)
             .setSmallIcon(R.drawable.ic_stat_note)
-            .setContentTitle("Felvétel: $subject")
-            .setContentText("Kicsengetéskor automatikusan leáll")
+            .setContentTitle("Fordító – felvétel")
+            .setContentText(text)
             .setContentIntent(openPi)
             .setOngoing(true)
-            .addAction(Notification.Action.Builder(null, "Leállítás", stopPi).build())
+            .addAction(Notification.Action.Builder(null, "Leállítás és fordítás", stopPi).build())
             .build()
     }
 
     private fun stopAndProcess() {
-        val active = isRecordingActive
-        isRecordingActive = false
         handler.removeCallbacks(safetyStop)
+        val hadRecorder = recorder != null
         try { recorder?.stop() } catch (_: Exception) {}
         recorder?.release(); recorder = null
-        val id = noteId
-        noteId = -1
+        val id = trId
+        trId = -1
+        _active.value = null
         val ctx: Context = applicationContext
-        (applicationContext as App).appScope.launch {
-            if (id >= 0 && active) {
-                val dao = Db.get(ctx).noteDao()
-                dao.byId(id)?.let { dao.update(it.copy(status = NoteStatus.QUEUED)) }
-                ProcessingWorker.enqueue(ctx, id)
+        if (id >= 0 && hadRecorder) {
+            (applicationContext as App).appScope.launch {
+                val dao = TrDb.get(ctx).dao()
+                dao.byId(id)?.let { dao.update(it.copy(status = TrStatus.QUEUED, progress = "Sorban áll…")) }
+                TranslateWorker.enqueue(ctx, id)
             }
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -198,42 +149,29 @@ class RecordingService : Service() {
     }
 
     override fun onDestroy() {
-        if (isRecordingActive) {
-            stopAndProcess()
-        } else {
-            try { recorder?.stop() } catch (_: Exception) {}
-            recorder?.release(); recorder = null
-        }
+        if (recorder != null) stopAndProcess()
         scope.cancel()
         super.onDestroy()
     }
 
     companion object {
-        const val ACTION_START = "hu.orajegyzet.REC_START"
-        const val ACTION_STOP = "hu.orajegyzet.REC_STOP"
+        const val ACTION_START = "hu.assisten.fordito.REC_START"
+        const val ACTION_STOP = "hu.assisten.fordito.REC_STOP"
+        const val EXTRA_STYLE = "style"
         const val NOTIF_ID = 42
-        const val DEFAULT_MAX_MIN = 45
+        const val MAX_MIN = 60
 
         @Volatile var isStarting = false
-        @Volatile var isRecordingActive = false
-        @Volatile var recordingStartMillis: Long = 0
+        @Volatile var startedAt: Long = 0
 
-        fun start(
-            ctx: Context,
-            lessonId: Long?,
-            title: String? = null,
-            projectId: String? = null,
-            docType: String = "JEG",
-            projectCode: String? = null
-        ) {
-            val i = Intent(ctx, RecordingService::class.java)
-                .setAction(ACTION_START)
-            lessonId?.let { i.putExtra("lessonId", it) }
-            title?.let { i.putExtra("title", it) }
-            projectId?.let { i.putExtra("projectId", it) }
-            projectCode?.let { i.putExtra("projectCode", it) }
-            i.putExtra("docType", docType)
-            ctx.startForegroundService(i)
+        private val _active = MutableStateFlow<Long?>(null)
+        /** A folyamatban lévő felvétel fordítás-azonosítója (null = nincs felvétel). */
+        val active: StateFlow<Long?> = _active
+
+        fun start(ctx: Context, style: String) {
+            ctx.startForegroundService(
+                Intent(ctx, RecordingService::class.java).setAction(ACTION_START).putExtra(EXTRA_STYLE, style)
+            )
         }
 
         fun stop(ctx: Context) {

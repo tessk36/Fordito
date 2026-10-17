@@ -183,6 +183,79 @@ class GeminiPipeline(
     }
 
     /**
+     * Fordító 0.1: tetszőleges utasítás egy hangfájlra (pl. átirat + fordítás JSON-ban).
+     * 10 MB alatt beágyazva küldi, fölötte (vagy ha a Gemini túl nagynak találja) a Files API-n át;
+     * a feltöltött fájl a végén törlődik a felhőből. 404-nél a tartalék modellekkel próbálkozik.
+     */
+    fun generateFromAudio(
+        audioPath: String,
+        mimeType: String,
+        instruction: String,
+        system: String,
+        jsonResponse: Boolean = true
+    ): String {
+        validateApiKey()
+        val file = File(audioPath)
+        if (!file.isFile || file.length() == 0L) error("A hangfájl hiányzik vagy üres.")
+        val mime = mimeType.ifBlank { "audio/mp4" }
+
+        fun body(audioPart: JSONObject): JSONObject {
+            val gen = JSONObject().put("temperature", 0.2)
+            if (jsonResponse) gen.put("responseMimeType", "application/json")
+            return JSONObject()
+                .put("systemInstruction", JSONObject().put("parts", JSONArray()
+                    .put(JSONObject().put("text", system))))
+                .put("contents", JSONArray().put(JSONObject()
+                    .put("role", "user")
+                    .put("parts", JSONArray()
+                        .put(audioPart)
+                        .put(JSONObject().put("text", instruction)))))
+                .put("generationConfig", gen)
+        }
+
+        fun call(audioPart: JSONObject): String {
+            var lastError: Exception? = null
+            for (m in modelsToTry()) {
+                try {
+                    val req = Request.Builder()
+                        .url("$baseUrl/v1beta/models/$m:generateContent")
+                        .post(body(audioPart).toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+                    return http.newCall(req).execute().use { r ->
+                        val t = r.body?.string() ?: ""
+                        if (!r.isSuccessful) throw errorForHttpCode(r.code, t, "generateContent", m)
+                        parseCandidateText(t)
+                    }
+                } catch (e: GeminiHttpException) {
+                    lastError = e
+                    if (e.code == 404) continue
+                    throw e
+                }
+            }
+            throw lastError ?: RuntimeException("A Gemini modellek egyike sem érhető el (404).")
+        }
+
+        fun viaUpload(): String {
+            val fileUri = uploadFile(file, mime)
+            return try {
+                waitForFileActive(fileUri)
+                call(JSONObject().put("fileData", JSONObject().put("mimeType", mime).put("fileUri", fileUri)))
+            } finally {
+                runCatching { deleteRemote(fileUri) }
+            }
+        }
+
+        if (file.length() > INLINE_MAX_BYTES) return viaUpload()
+        return try {
+            call(JSONObject().put("inlineData", JSONObject()
+                .put("mimeType", mime).put("data", encodeBase64(file.readBytes()))))
+        } catch (e: GeminiHttpException) {
+            if (!isPayloadTooLarge(e)) throw e
+            viaUpload()
+        }
+    }
+
+    /**
      * A kulccsal elérhető modellek lekérése (ListModels, lapozással), szűrve a jegyzetkészítésre
      * alkalmasakra (1.1.6). Hibánál érthető üzenettel dob.
      */
@@ -277,14 +350,14 @@ class GeminiPipeline(
     }
 
     /** Resumable feltöltés a Files API-ra; a file_uri-t adja vissza. */
-    private fun uploadFile(file: File): String {
+    private fun uploadFile(file: File, mimeType: String = "audio/mp4"): String {
         val meta = JSONObject().put("file", JSONObject().put("display_name", file.name))
         val startReq = Request.Builder()
             .url("$baseUrl/upload/v1beta/files")
             .header("X-Goog-Upload-Protocol", "resumable")
             .header("X-Goog-Upload-Command", "start")
             .header("X-Goog-Upload-Header-Content-Length", file.length().toString())
-            .header("X-Goog-Upload-Header-Content-Type", "audio/mp4")
+            .header("X-Goog-Upload-Header-Content-Type", mimeType)
             .post(meta.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
@@ -300,7 +373,7 @@ class GeminiPipeline(
             .url(uploadUrl)
             .header("X-Goog-Upload-Command", "upload, finalize")
             .header("X-Goog-Upload-Offset", "0")
-            .post(file.asRequestBody("audio/mp4".toMediaType()))
+            .post(file.asRequestBody(mimeType.toMediaType()))
             .build()
 
         return http.newCall(upReq).execute().use { r ->

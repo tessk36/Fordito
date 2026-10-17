@@ -12,11 +12,12 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "hu.orajegyzet"
+        // Fordító: saját azonosító, így az AssiSten-s (hu.orajegyzet) mellé települ
+        applicationId = "hu.assisten.fordito"
         minSdk = 31   // 1.1: a LiteRT-LM (Gemma 4) Android 12+ készüléket igényel
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.1.8"
+        versionCode = 1
+        versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters.clear(); abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
@@ -92,7 +93,7 @@ android {
     applicationVariants.all {
         outputs.configureEach {
             (this as? BaseVariantOutputImpl)?.outputFileName =
-                "AssiSten-s-${versionName}-${buildType.name}.apk"
+                "Fordito-${versionName}-${buildType.name}.apk"
         }
     }
 }
@@ -132,9 +133,6 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
-    // Widget
-    implementation("androidx.glance:glance-appwidget:1.1.0")
-
     // HTTP (Gemini API)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
@@ -147,10 +145,6 @@ dependencies {
     // Offline LLM (Gemma 4) a LiteRT-LM motoron — modellfájl (.litertlm) külön, lásd README.
     // Rögzített verzió: ugyanez fut a Google AI Edge Gallery 1.0.20-ban a Gemma 4 E2B-vel.
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
-
-    // Email (SMTP)
-    implementation("com.sun.mail:android-mail:1.6.7")
-    implementation("com.sun.mail:android-activation:1.6.7")
 
     // Testing
     testImplementation("junit:junit:4.13.2")

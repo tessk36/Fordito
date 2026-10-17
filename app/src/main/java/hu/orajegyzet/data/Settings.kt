@@ -97,7 +97,8 @@ data class AppSettings(
     val whisperGlossary: String = "",       // szótár: nevek, szakszavak a Whispernek (1.1.4)
     val whisperAccurate: Boolean = false,   // pontosabb átírás: beam search (1.1.4)
     val whisperModelName: String = "",      // az importált Whisper-fájl eredeti neve (1.1.4)
-    val geminiModelsCache: String = ""      // a kulccsal lekért Gemini-modellek, vesszővel (1.1.6)
+    val geminiModelsCache: String = "",     // a kulccsal lekért Gemini-modellek, vesszővel (1.1.6)
+    val trStyle: String = "NATURAL"         // Fordító: utoljára választott átírási mód
 )
 
 private val Context.ds by preferencesDataStore("settings")
@@ -131,6 +132,7 @@ object Settings {
     private val WHISPER_ACCURATE = booleanPreferencesKey("whisper_accurate")
     private val WHISPER_MODEL_NAME = stringPreferencesKey("whisper_model_name")
     private val GEMINI_MODELS_CACHE = stringPreferencesKey("gemini_models_cache")
+    private val TR_STYLE = stringPreferencesKey("tr_style")
 
     suspend fun migrateSecretsIfNeeded(ctx: Context) {
         try {
@@ -186,7 +188,8 @@ object Settings {
             whisperGlossary = p[WHISPER_GLOSSARY] ?: "",
             whisperAccurate = p[WHISPER_ACCURATE] ?: false,
             whisperModelName = p[WHISPER_MODEL_NAME] ?: "",
-            geminiModelsCache = p[GEMINI_MODELS_CACHE] ?: ""
+            geminiModelsCache = p[GEMINI_MODELS_CACHE] ?: "",
+            trStyle = p[TR_STYLE] ?: "NATURAL"
         )
     }
 
@@ -200,6 +203,11 @@ object Settings {
     /** A lekért Gemini-modellek listája (a többi beállításhoz nem nyúl). */
     suspend fun setGeminiModelsCache(ctx: Context, value: String) {
         ctx.ds.edit { p -> p[GEMINI_MODELS_CACHE] = value }
+    }
+
+    /** Fordító: az utoljára választott átírási mód (a többi beállításhoz nem nyúl). */
+    suspend fun setTrStyle(ctx: Context, style: String) {
+        ctx.ds.edit { p -> p[TR_STYLE] = style }
     }
 
     /** Csak a Whisper-modell eredeti nevét írja (importkor). */
