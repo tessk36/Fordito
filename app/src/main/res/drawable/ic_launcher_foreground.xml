@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- fehér lap -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M40,28 h33 a4,4 0 0 1 4,4 v44 a4,4 0 0 1 -4,4 h-33 a4,4 0 0 1 -4,-4 v-44 a4,4 0 0 1 4,-4 z"/>
+    <!-- tinta gerinc -->
+    <path android:fillColor="#26215C"
+        android:pathData="M40,28 h6 v52 h-6 a4,4 0 0 1 -4,-4 v-44 a4,4 0 0 1 4,-4 z"/>
+    <!-- spirál lyukak -->
+    <path android:fillColor="#26215C" android:pathData="M41,38 m-2,0 a2,2 0 1 0 4,0 a2,2 0 1 0 -4,0"/>
+    <path android:fillColor="#26215C" android:pathData="M41,54 m-2,0 a2,2 0 1 0 4,0 a2,2 0 1 0 -4,0"/>
+    <path android:fillColor="#26215C" android:pathData="M41,70 m-2,0 a2,2 0 1 0 4,0 a2,2 0 1 0 -4,0"/>
+    <!-- sorok -->
+    <path android:fillColor="#534AB7" android:pathData="M52,42 h20 v3 h-20 z"/>
+    <path android:fillColor="#534AB7" android:pathData="M52,54 h20 v3 h-20 z"/>
+    <path android:fillColor="#534AB7" android:pathData="M52,66 h13 v3 h-13 z"/>
+</vector>
