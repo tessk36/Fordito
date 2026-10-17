@@ -63,6 +63,24 @@ class OfflinePipeline(
     suspend fun transcribeOnly(audioPath: String, onPartial: (suspend (String) -> Unit)? = null): String =
         runTranscription(audioPath, onPartial)
 
+    /**
+     * Fordító 0.2 (élő tolmács, helyben): egy rövid, 16 kHz mono 16 bites PCM szakasz átirata.
+     * A modell melegen marad a szakaszok között (keepWarm).
+     */
+    suspend fun transcribePcm16k(pcm: ByteArray): String {
+        val whisperModel = File(ctx.filesDir, "models/whisper.bin")
+        if (!whisperModel.isFile) error("Nincs Whisper-modell (Beállítások → Modellek).")
+        if (pcm.size < 16_000) return "" // fél mp alatti darab: nincs mit átírni
+        val wav = File(ctx.cacheDir, "live_${System.nanoTime()}.wav")
+        return try {
+            writeWav(wav, pcm, sampleRate = 16_000, channels = 1, bitsPerSample = 16)
+            val text = transcribeWhisper(wav, whisperModel.absolutePath).trim()
+            if (isWhisperHallucination(text)) "" else text
+        } finally {
+            wav.delete()
+        }
+    }
+
     /** Összefoglaló a kész leiratból. */
     suspend fun finishSummary(transcript: String, subject: String, dateLabel: String, isLesson: Boolean): NoteResult =
         buildOfflineResult(transcript)

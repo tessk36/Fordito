@@ -16,6 +16,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import hu.orajegyzet.rec.RecordingService
+import hu.orajegyzet.ui.LiveScreen
 import hu.orajegyzet.ui.SettingsScreen
 import hu.orajegyzet.ui.SharedInput
 import hu.orajegyzet.ui.TranslationDetailScreen
@@ -65,6 +66,7 @@ class MainActivity : ComponentActivity() {
                                 onSharedConsumed = { shared = null },
                                 onOpenHistory = { nav.navigate("history") },
                                 onOpenSettings = { nav.navigate("settings") },
+                                onOpenLive = { nav.navigate("live") },
                                 onStartRecording = { style -> startRecordingChecked(style) },
                                 onStopRecording = { RecordingService.stop(this@MainActivity) }
                             )
@@ -90,6 +92,12 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         composable("settings") { SettingsScreen(onBack = { nav.popBackStack() }) }
+                        composable("live") {
+                            LiveScreen(
+                                onBack = { nav.popBackStack() },
+                                onOpenTranslation = { id -> nav.navigate("tr/$id") }
+                            )
+                        }
                     }
                 }
             }

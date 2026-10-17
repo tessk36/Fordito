@@ -300,6 +300,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                             }
                         ) { Text(if (geminiListBusy) "Lekérés…" else "🔄 Frissítés", fontSize = 12.sp) }
                     }
+                    OutlinedTextField(
+                        value = s.liveModel,
+                        onValueChange = { s = s.copy(liveModel = it.trim()) },
+                        label = { Text("Élő tolmács modell") },
+                        supportingText = { Text("Alapértelmezés: gemini-3.5-live-translate-preview (WebSocketes élő modell, a lenti listában nem jelenik meg)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
                     geminiListMsg?.let { Text(it, fontSize = 12.sp) }
                     if (s.geminiModelsCache.isBlank()) {
                         Text("Beépített lista látszik. A „Frissítés” a kulcsoddal lekéri az összes elérhető modellt.",

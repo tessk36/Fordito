@@ -57,6 +57,7 @@ fun TranslatorScreen(
     onSharedConsumed: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenLive: () -> Unit,
     onStartRecording: (style: String) -> Unit,
     onStopRecording: () -> Unit
 ) {
@@ -124,7 +125,8 @@ fun TranslatorScreen(
             TopAppBar(
                 title = { Text("Fordító", fontWeight = FontWeight.Bold) },
                 actions = {
-                    TextButton(onClick = onOpenHistory) { Text("🕘 Előzmények") }
+                    TextButton(onClick = onOpenLive, enabled = recordingId == null) { Text("🎧 Élő") }
+                    TextButton(onClick = onOpenHistory) { Text("🕘") }
                     TextButton(onClick = onOpenSettings) { Text("⚙") }
                 }
             )

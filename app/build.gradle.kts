@@ -16,8 +16,8 @@ android {
         applicationId = "hu.assisten.fordito"
         minSdk = 31   // 1.1: a LiteRT-LM (Gemma 4) Android 12+ készüléket igényel
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters.clear(); abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }

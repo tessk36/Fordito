@@ -1,5 +1,14 @@
 # Fordító
 
+## 0.2.0 – 2026. 10. 17.
+
+- **Élő tolmács** (🎧 Élő a főképernyőn): beszélsz, és folyamatosan jön a magyar felirat.
+  - Online: Gemini Live, `gemini-3.5-live-translate-preview` modell (WebSocket), kb. 1–2 mp késés; kérésre a magyar hang is szól (visszhangszűrővel).
+  - Helyben: beszédszakaszolás szünetnél, Whisper-átirat, Gemma 4 fordítás szakaszonként; kb. 3–6 mp késés. Adatvédelmi zárnál csak ez fut.
+- Az élő modell neve a Beállítások → Online részben átírható.
+- Az élő tolmácsolás menthető az előzmények közé.
+- Új unit tesztek: beszédszakaszoló, Live-üzenetek értelmezése.
+
 ## 0.1.0 – 2026. 10. 17. (fork az AssiSten-s 1.1.8-ból)
 
 - Új app: **Fordító**, azonosító `hu.assisten.fordito` (az AssiSten-s mellé települ).

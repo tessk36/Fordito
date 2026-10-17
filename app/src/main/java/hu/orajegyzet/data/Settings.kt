@@ -98,7 +98,9 @@ data class AppSettings(
     val whisperAccurate: Boolean = false,   // pontosabb átírás: beam search (1.1.4)
     val whisperModelName: String = "",      // az importált Whisper-fájl eredeti neve (1.1.4)
     val geminiModelsCache: String = "",     // a kulccsal lekért Gemini-modellek, vesszővel (1.1.6)
-    val trStyle: String = "NATURAL"         // Fordító: utoljára választott átírási mód
+    val trStyle: String = "NATURAL",        // Fordító: utoljára választott átírási mód
+    val liveModel: String = "gemini-3.5-live-translate-preview", // Fordító 0.2: élő tolmács modell
+    val liveSpeak: Boolean = false          // Fordító 0.2: élő tolmács magyar hangja hangosan
 )
 
 private val Context.ds by preferencesDataStore("settings")
@@ -133,6 +135,8 @@ object Settings {
     private val WHISPER_MODEL_NAME = stringPreferencesKey("whisper_model_name")
     private val GEMINI_MODELS_CACHE = stringPreferencesKey("gemini_models_cache")
     private val TR_STYLE = stringPreferencesKey("tr_style")
+    private val LIVE_MODEL = stringPreferencesKey("live_model")
+    private val LIVE_SPEAK = booleanPreferencesKey("live_speak")
 
     suspend fun migrateSecretsIfNeeded(ctx: Context) {
         try {
@@ -189,7 +193,9 @@ object Settings {
             whisperAccurate = p[WHISPER_ACCURATE] ?: false,
             whisperModelName = p[WHISPER_MODEL_NAME] ?: "",
             geminiModelsCache = p[GEMINI_MODELS_CACHE] ?: "",
-            trStyle = p[TR_STYLE] ?: "NATURAL"
+            trStyle = p[TR_STYLE] ?: "NATURAL",
+            liveModel = p[LIVE_MODEL]?.takeIf { it.isNotBlank() } ?: "gemini-3.5-live-translate-preview",
+            liveSpeak = p[LIVE_SPEAK] ?: false
         )
     }
 
@@ -208,6 +214,11 @@ object Settings {
     /** Fordító: az utoljára választott átírási mód (a többi beállításhoz nem nyúl). */
     suspend fun setTrStyle(ctx: Context, style: String) {
         ctx.ds.edit { p -> p[TR_STYLE] = style }
+    }
+
+    /** Élő tolmács: a magyar hang hangosan (a többi beállításhoz nem nyúl). */
+    suspend fun setLiveSpeak(ctx: Context, value: Boolean) {
+        ctx.ds.edit { p -> p[LIVE_SPEAK] = value }
     }
 
     /** Csak a Whisper-modell eredeti nevét írja (importkor). */
@@ -269,6 +280,7 @@ object Settings {
             p[PREFER_GEMINI] = s.preferGemini
             p[WHISPER_GLOSSARY] = s.whisperGlossary
             p[WHISPER_ACCURATE] = s.whisperAccurate
+            p[LIVE_MODEL] = s.liveModel
         }
         if (secretError == null) SecretCipher.secretsLost = false
         secretError?.let { throw it }

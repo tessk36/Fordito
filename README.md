@@ -20,6 +20,10 @@ Magyar bemenetnél nem fordít, hanem a kért módban átírja a szöveget.
 megosztás más appból (szöveg vagy hang), és a kijelölt szöveg menüjében a
 „Fordítás magyarra” pont.
 
+**Élő tolmács (0.2):** a 🎧 Élő gombbal folyamatos tolmácsolás – online a Gemini Live
+(`gemini-3.5-live-translate-preview`, kb. 1–2 mp késés, kérésre magyar hanggal), vagy helyben
+Whisper + Gemma 4-gyel (kb. 3–6 mp késés). A képernyő tolmácsolás közben nem alszik el.
+
 **Motorok** (ugyanaz a logika, mint az AssiSten-s-ben):
 - **Helyben:** Whisper (automatikus nyelvfelismeréssel) + Gemma 4 (LiteRT-LM). Semmi nem hagyja el a telefont.
 - **Felhő:** Gemini – hangnál egy hívásban átirat és fordítás, a fájl utána törlődik a felhőből.
@@ -61,6 +65,10 @@ app/src/main/java/hu/orajegyzet/      (a Kotlin-csomag neve az eredeti maradt)
   ai/GemmaEngine.kt       — Gemma 4 (LiteRT-LM)
   ui/TranslatorScreen.kt  — Fordító, Előzmények, részletnézet
   ui/SettingsScreen.kt    — Beállítások
+  ui/LiveScreen.kt        — élő tolmács képernyő és vezérlő
+  ai/LiveTranslateClient.kt — Gemini Live (WebSocket) fordító kliens
+  ai/LiveLocalTranslator.kt — helyi élő tolmács, beszédszakaszoló
+  rec/MicStream.kt        — 16 kHz-es élő mikrofonfolyam
 ```
 
 ## 4. Ismert korlátok (0.1)
