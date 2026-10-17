@@ -1,5 +1,14 @@
 # Fordító
 
+## 0.2.2 – 2026. 10. 17.
+
+- Élő tolmács, új kijelző:
+  - futás közben egysoros fejléc (idő, nyelvpár, mód, hang, Stop) – a beállítások csak indítás előtt látszanak;
+  - két külön ablak: felül az eredeti, alul a magyar (nagyobb betűvel); fekvő helyzetben egymás mellett;
+  - mondatonkénti tagolás és számozás (mondatvégnél vagy 1,5 mp szünet után új sor), a legutóbbi sor kiemelve;
+  - leállítás után a feliratok maradnak, alattuk Másolás / Mentés / Törlés.
+- A verziószám a Beállítások alján látszik.
+
 ## 0.2.0 – 2026. 10. 17.
 
 - **Élő tolmács** (🎧 Élő a főképernyőn): beszélsz, és folyamatosan jön a magyar felirat.

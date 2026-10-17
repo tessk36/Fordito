@@ -446,6 +446,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Text("🗑️ Összes fordítás törlése")
                 }
             }
+            item {
+                Text("Fordító ${hu.orajegyzet.BuildConfig.VERSION_NAME}", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+            }
         }
         }
     }
