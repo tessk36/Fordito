@@ -49,26 +49,48 @@ class LiveTranslateClient(
     /** A setup előtt érkező darabok (legfeljebb ~3 mp), hogy az eleje ne vesszen el. */
     private val pending = ArrayDeque<ByteArray>()
 
+    /** A setup-üzenet mezőelrendezése (lásd [setupMessage]); a működőt megjegyezzük. */
+    @Volatile private var layout = workingLayout
+
     fun connect() {
         if (apiKey.isBlank()) { listener.onError("Hiányzó Gemini API-kulcs (Beállítások → Online)."); return }
+        open()
+    }
+
+    private fun open() {
         val req = Request.Builder()
             .url("$WS_URL?key=${apiKey.trim()}")
             .build()
+        val myLayout = layout
         ws = http.newWebSocket(req, object : WebSocketListener() {
+            /** Csak az aktuális kapcsolat eseményei számítanak (elrendezés-váltáskor a régi még zárhat). */
+            private fun current(w: WebSocket) = w === ws
+
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                webSocket.send(setupMessage(model, targetLanguage).toString())
+                webSocket.send(setupMessage(model, targetLanguage, myLayout).toString())
             }
-            override fun onMessage(webSocket: WebSocket, text: String) = handle(text)
-            override fun onMessage(webSocket: WebSocket, bytes: ByteString) = handle(bytes.utf8())
+            override fun onMessage(webSocket: WebSocket, text: String) { if (current(webSocket)) handle(text) }
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) { if (current(webSocket)) handle(bytes.utf8()) }
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 webSocket.close(1000, null)
+                if (!current(webSocket)) return
+                // a szerver nem ismerte a setup egy mezőjét → a következő elrendezéssel újrapróbáljuk
+                if (!ready && !closedByUs && code == 1007 && reason.contains("Unknown name") &&
+                    myLayout + 1 < LAYOUT_COUNT) {
+                    Log.i("Fordito", "Live setup elrendezés $myLayout elutasítva: $reason")
+                    layout = myLayout + 1
+                    open()
+                    return
+                }
                 if (!closedByUs && code != 1000) listener.onError(closeMessage(code, reason))
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (!current(webSocket)) return
                 ready = false
                 listener.onClosed()
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (!current(webSocket)) return
                 ready = false
                 if (!closedByUs) {
                     val body = runCatching { response?.body?.string() }.getOrNull().orEmpty().take(300)
@@ -92,6 +114,7 @@ class LiveTranslateClient(
         val msg = parseServerMessage(raw)
         if (msg.setupComplete) {
             ready = true
+            workingLayout = layout
             synchronized(pending) { while (pending.isNotEmpty()) sendNow(pending.removeFirst()) }
             listener.onReady()
         }
@@ -144,16 +167,43 @@ class LiveTranslateClient(
         private const val WS_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
-        fun setupMessage(model: String, target: String): JSONObject {
+        /** Ahány elrendezést kipróbálunk. */
+        const val LAYOUT_COUNT = 3
+        /** Az utoljára elfogadott elrendezés (a következő indításnál ezzel kezd). */
+        @Volatile var workingLayout = 0
+
+        /**
+         * A setup-üzenet. A Google leírása és a szerver nem egyezik abban, hova kerülnek a mezők
+         * (a szerver a generationConfig alatt nem ismerte az inputAudioTranscription-t), ezért:
+         *  0: átiratok a setup alatt, translationConfig a generationConfig alatt;
+         *  1: átiratok és translationConfig is a setup alatt;
+         *  2: minden a generationConfig alatt (a leírás szerinti).
+         */
+        fun setupMessage(model: String, target: String, layout: Int = 0): JSONObject {
             val m = if (model.startsWith("models/")) model else "models/$model"
-            val gen = JSONObject()
-                .put("responseModalities", JSONArray().put("AUDIO"))
-                .put("inputAudioTranscription", JSONObject())
-                .put("outputAudioTranscription", JSONObject())
-                .put("translationConfig", JSONObject()
-                    .put("targetLanguageCode", target)
-                    .put("echoTargetLanguage", false))
-            return JSONObject().put("setup", JSONObject().put("model", m).put("generationConfig", gen))
+            val translation = JSONObject()
+                .put("targetLanguageCode", target)
+                .put("echoTargetLanguage", false)
+            val gen = JSONObject().put("responseModalities", JSONArray().put("AUDIO"))
+            val setup = JSONObject().put("model", m)
+            when (layout) {
+                0 -> {
+                    setup.put("inputAudioTranscription", JSONObject())
+                    setup.put("outputAudioTranscription", JSONObject())
+                    gen.put("translationConfig", translation)
+                }
+                1 -> {
+                    setup.put("inputAudioTranscription", JSONObject())
+                    setup.put("outputAudioTranscription", JSONObject())
+                    setup.put("translationConfig", translation)
+                }
+                else -> {
+                    gen.put("inputAudioTranscription", JSONObject())
+                    gen.put("outputAudioTranscription", JSONObject())
+                    gen.put("translationConfig", translation)
+                }
+            }
+            return JSONObject().put("setup", setup.put("generationConfig", gen))
         }
 
         fun audioMessage(chunk: ByteArray): JSONObject =
@@ -196,7 +246,7 @@ class LiveTranslateClient(
         fun closeMessage(code: Int, reason: String): String = when {
             reason.contains("API key", ignoreCase = true) -> "Érvénytelen Gemini API-kulcs ($code)."
             reason.contains("not found", ignoreCase = true) -> "A modell nem érhető el: $reason"
-            reason.isNotBlank() -> "A szerver bontotta a kapcsolatot ($code): ${reason.take(200)}"
+            reason.isNotBlank() -> "A szerver bontotta a kapcsolatot ($code): ${reason.take(400)}"
             else -> "A szerver bontotta a kapcsolatot ($code)."
         }
     }

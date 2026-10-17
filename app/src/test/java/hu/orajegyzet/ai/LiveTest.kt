@@ -80,4 +80,17 @@ class LiveTest {
         assertTrue(LiveTranslateClient.closeMessage(1008, "API key not valid").contains("API-kulcs"))
         assertTrue(LiveTranslateClient.closeMessage(1011, "").contains("1011"))
     }
+
+    @Test fun setupLayoutsPlaceFieldsDifferently() {
+        val l0 = LiveTranslateClient.setupMessage("gemini-3.5-live-translate-preview", "hu", 0).getJSONObject("setup")
+        assertEquals("models/gemini-3.5-live-translate-preview", l0.getString("model"))
+        assertTrue(l0.has("inputAudioTranscription"))
+        assertEquals("hu", l0.getJSONObject("generationConfig").getJSONObject("translationConfig").getString("targetLanguageCode"))
+        val l1 = LiveTranslateClient.setupMessage("m", "hu", 1).getJSONObject("setup")
+        assertTrue(l1.has("translationConfig"))
+        assertFalse(l1.getJSONObject("generationConfig").has("translationConfig"))
+        val l2 = LiveTranslateClient.setupMessage("m", "hu", 2).getJSONObject("setup")
+        assertFalse(l2.has("inputAudioTranscription"))
+        assertTrue(l2.getJSONObject("generationConfig").has("inputAudioTranscription"))
+    }
 }
